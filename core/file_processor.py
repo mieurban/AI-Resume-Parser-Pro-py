@@ -1,20 +1,68 @@
 import os
 import re
+import shutil
+import platform
 from pdfminer.high_level import extract_text as pdf_extract_text
 from docx import Document
 import pytesseract
 from PIL import Image
 from typing import Optional
 from pathlib import Path
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 class FileProcessor:
     def __init__(self):
-        # Configure Tesseract path (update for your system)
-        self.tesseract_path = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
-        try:
+        # Configure Tesseract path based on OS
+        self.tesseract_path = self._find_tesseract()
+        if self.tesseract_path:
             pytesseract.pytesseract.tesseract_cmd = self.tesseract_path
-        except:
-            pass  # Tesseract might not be available
+            logger.info(f"Tesseract configured at: {self.tesseract_path}")
+        else:
+            logger.warning("Tesseract not found - OCR for images will be unavailable")
+    
+    def _find_tesseract(self) -> Optional[str]:
+        """Find Tesseract executable based on operating system."""
+        system = platform.system()
+        
+        # Common paths by OS
+        paths_to_check = []
+        
+        if system == "Windows":
+            paths_to_check = [
+                r'C:\Program Files\Tesseract-OCR\tesseract.exe',
+                r'C:\Program Files (x86)\Tesseract-OCR\tesseract.exe',
+                r'C:\Tesseract-OCR\tesseract.exe',
+            ]
+        elif system == "Darwin":  # macOS
+            paths_to_check = [
+                '/usr/local/bin/tesseract',
+                '/opt/homebrew/bin/tesseract',  # Apple Silicon
+                '/opt/local/bin/tesseract',  # MacPorts
+            ]
+        else:  # Linux
+            paths_to_check = [
+                '/usr/bin/tesseract',
+                '/usr/local/bin/tesseract',
+            ]
+        
+        # Check explicit paths first
+        for path in paths_to_check:
+            if os.path.isfile(path):
+                return path
+        
+        # Try to find in PATH
+        tesseract_in_path = shutil.which('tesseract')
+        if tesseract_in_path:
+            return tesseract_in_path
+        
+        return None
+    
+    def is_ocr_available(self) -> bool:
+        """Check if OCR functionality is available."""
+        return self.tesseract_path is not None
 
     def _detect_file_type(self, file_path: str) -> str:
         """Detect file type from magic bytes if extension is missing"""
@@ -96,6 +144,13 @@ class FileProcessor:
 
     def _extract_from_image(self, file_path: str) -> str:
         """Extract text from image files using OCR"""
+        if not self.is_ocr_available():
+            raise ValueError(
+                "OCR is not available. Please install Tesseract: "
+                "macOS: 'brew install tesseract', "
+                "Ubuntu: 'sudo apt-get install tesseract-ocr', "
+                "Windows: Download from https://github.com/UB-Mannheim/tesseract/wiki"
+            )
         try:
             img = Image.open(file_path)
             text = pytesseract.image_to_string(img)
