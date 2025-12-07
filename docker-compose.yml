@@ -1,0 +1,39 @@
+# AI Resume Parser Pro - Docker Compose Configuration
+# For ApplyMate Laravel Integration
+
+version: '3.8'
+
+services:
+  ai-resume-parser:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ai-resume-parser-pro
+    restart: unless-stopped
+    ports:
+      - "8001:8001"
+    environment:
+      - API_KEY=${API_KEY:-your-secure-api-key-here}
+      - PORT=8001
+      - HOST=0.0.0.0
+      - LOG_LEVEL=info
+    volumes:
+      # Optional: Mount for persistent model cache
+      - parser-cache:/home/appuser/.cache
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    networks:
+      - applymate-network
+
+volumes:
+  parser-cache:
+    driver: local
+
+networks:
+  applymate-network:
+    driver: bridge
+    name: applymate-network

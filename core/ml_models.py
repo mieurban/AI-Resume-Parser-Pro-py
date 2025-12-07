@@ -111,7 +111,7 @@ class MLModels:
         
         if resume_data.get('experience'):
             sections.append(" ".join(
-                f"{exp.get('position', '')} {exp.get('company', ')}" 
+                f"{exp.get('position', '')} {exp.get('company', '')}" 
                 for exp in resume_data['experience']
             ))
         

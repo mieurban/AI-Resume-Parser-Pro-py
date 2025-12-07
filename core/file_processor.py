@@ -11,7 +11,37 @@ class FileProcessor:
     def __init__(self):
         # Configure Tesseract path (update for your system)
         self.tesseract_path = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
-        pytesseract.pytesseract.tesseract_cmd = self.tesseract_path
+        try:
+            pytesseract.pytesseract.tesseract_cmd = self.tesseract_path
+        except:
+            pass  # Tesseract might not be available
+
+    def _detect_file_type(self, file_path: str) -> str:
+        """Detect file type from magic bytes if extension is missing"""
+        try:
+            with open(file_path, 'rb') as f:
+                header = f.read(8)
+            
+            # PDF: starts with %PDF
+            if header[:4] == b'%PDF':
+                return '.pdf'
+            
+            # DOCX/ZIP: starts with PK (ZIP archive)
+            if header[:2] == b'PK':
+                return '.docx'
+            
+            # PNG: starts with \x89PNG
+            if header[:4] == b'\x89PNG':
+                return '.png'
+            
+            # JPEG: starts with \xff\xd8\xff
+            if header[:3] == b'\xff\xd8\xff':
+                return '.jpg'
+            
+            # Default to txt if we can't detect
+            return '.txt'
+        except:
+            return '.txt'
 
     def extract_text(self, file_path: str) -> str:
         """Extract text from various file formats"""
@@ -19,6 +49,10 @@ class FileProcessor:
             raise FileNotFoundError(f"File not found: {file_path}")
 
         file_ext = Path(file_path).suffix.lower()
+        
+        # If no extension or empty, try to detect from content
+        if not file_ext or file_ext == '.':
+            file_ext = self._detect_file_type(file_path)
         
         if file_ext == '.pdf':
             return self._extract_from_pdf(file_path)
@@ -28,8 +62,18 @@ class FileProcessor:
             return self._extract_from_image(file_path)
         elif file_ext == '.txt':
             return self._extract_from_txt(file_path)
+        elif file_ext == '.doc':
+            # Try to handle .doc as .docx (may not always work)
+            try:
+                return self._extract_from_docx(file_path)
+            except:
+                raise ValueError(f"Old .doc format not supported. Please convert to .docx or .pdf")
         else:
-            raise ValueError(f"Unsupported file format: {file_ext}")
+            # Try PDF as default (most common resume format)
+            try:
+                return self._extract_from_pdf(file_path)
+            except:
+                raise ValueError(f"Unsupported file format: {file_ext}")
 
     def _extract_from_pdf(self, file_path: str) -> str:
         """Extract text from PDF files"""
@@ -69,10 +113,14 @@ class FileProcessor:
 
     def _clean_text(self, text: str) -> str:
         """Clean extracted text by removing excessive whitespace and special characters"""
-        # Replace multiple whitespace with single space
-        text = re.sub(r'\s+', ' ', text)
+        # Normalize line endings
+        text = text.replace('\r\n', '\n').replace('\r', '\n')
+        # Replace multiple spaces (not newlines) with single space
+        text = re.sub(r'[^\S\n]+', ' ', text)
+        # Replace 3+ consecutive newlines with 2 newlines
+        text = re.sub(r'\n{3,}', '\n\n', text)
         # Remove form feed characters
         text = re.sub(r'\x0c', '', text)
-        # Remove non-printable characters
-        text = ''.join(char for char in text if char.isprintable() or char in {'\n', '\t', '\r'})
+        # Remove non-printable characters (except newlines, tabs)
+        text = ''.join(char for char in text if char.isprintable() or char in {'\n', '\t'})
         return text.strip()
