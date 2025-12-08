@@ -344,16 +344,42 @@ def get_memory_usage() -> float:
 
 
 def extract_current_role(entities: Dict) -> Optional[str]:
-    """Extract current role from entities."""
+    """Extract current role from entities - looks for job with 'Present' or no end date."""
     experience = entities.get("experience", [])
-    if experience and len(experience) > 0:
-        first_exp = experience[0]
-        if isinstance(first_exp, dict):
-            title = first_exp.get("title") or first_exp.get("position")
-            company = first_exp.get("company") or first_exp.get("organization")
-            if title and company:
-                return f"{title} at {company}"
-            return title or company
+    if not experience:
+        return None
+    
+    # First, try to find a job that is marked as current (end_date is "Present" or similar)
+    current_indicators = ['present', 'current', 'now', 'ongoing', 'till date', 'to date']
+    
+    for exp in experience:
+        if isinstance(exp, dict):
+            end_date = exp.get("end_date", "") or ""
+            end_date_lower = str(end_date).lower().strip()
+            
+            # Check if this is the current job
+            is_current = (
+                not end_date or  # No end date
+                end_date_lower == "" or
+                any(indicator in end_date_lower for indicator in current_indicators)
+            )
+            
+            if is_current:
+                title = exp.get("title") or exp.get("position")
+                company = exp.get("company") or exp.get("organization")
+                if title and company:
+                    return f"{title} at {company}"
+                return title or company
+    
+    # Fallback: return the first experience if no "current" job found
+    first_exp = experience[0]
+    if isinstance(first_exp, dict):
+        title = first_exp.get("title") or first_exp.get("position")
+        company = first_exp.get("company") or first_exp.get("organization")
+        if title and company:
+            return f"{title} at {company}"
+        return title or company
+    
     return None
 
 
@@ -408,6 +434,55 @@ def generate_recommendations(missing_skills: List[str]) -> List[str]:
         if len(missing_skills) > 3:
             recommendations.append(f"Focus on developing expertise in {missing_skills[0]}")
     return recommendations
+
+
+def normalize_certifications(certifications: List) -> List[str]:
+    """Convert certifications from dict format to list of strings and deduplicate."""
+    if not certifications:
+        return []
+    
+    result = []
+    for cert in certifications:
+        if isinstance(cert, str):
+            name = cert.strip()
+        elif isinstance(cert, dict):
+            name = cert.get('name', '').strip()
+        else:
+            name = str(cert).strip()
+        
+        if name:
+            # Clean up newlines and extra whitespace
+            name = ' '.join(name.split())
+            result.append(name)
+    
+    # Deduplicate: remove entries that are substrings of other entries
+    # or are very similar (case-insensitive)
+    unique = []
+    seen_lower = set()
+    
+    # Sort by length descending so longer (more complete) names come first
+    result_sorted = sorted(result, key=len, reverse=True)
+    
+    for name in result_sorted:
+        name_lower = name.lower()
+        
+        # Skip if exact match already seen
+        if name_lower in seen_lower:
+            continue
+        
+        # Skip if this is a substring of an already-added certification
+        is_substring = False
+        for existing in unique:
+            existing_lower = existing.lower()
+            if name_lower in existing_lower or existing_lower in name_lower:
+                is_substring = True
+                break
+        
+        if not is_substring:
+            unique.append(name)
+            seen_lower.add(name_lower)
+    
+    return unique
 
 
 def extract_basic_entities(text: str) -> Dict[str, Any]:
@@ -520,7 +595,7 @@ async def parse_resume_v1(
     
     logger.info("Parse resume request started", extra={
         "request_id": request_id,
-        "filename": file.filename,
+        "file_name": file.filename,
         "content_type": file.content_type
     })
     
@@ -587,7 +662,7 @@ async def parse_resume_v1(
                 "experience": entities.get("experience", []),
                 "skills": entities.get("skills", []),
                 "skills_normalized": entities.get("skills_normalized", []),
-                "certifications": entities.get("certifications", []),
+                "certifications": normalize_certifications(entities.get("certifications", [])),
                 "languages": extract_languages(text),
                 "summary": extract_summary(text),
             },
@@ -663,7 +738,7 @@ async def parse_text_v1(
                 "experience": entities.get("experience", []),
                 "skills": entities.get("skills", []),
                 "skills_normalized": entities.get("skills_normalized", []),
-                "certifications": entities.get("certifications", []),
+                "certifications": normalize_certifications(entities.get("certifications", [])),
                 "languages": extract_languages(text),
                 "summary": extract_summary(text),
             },
@@ -731,7 +806,7 @@ async def parse_batch_v1(
                     "experience": entities.get("experience", []),
                     "skills": entities.get("skills", []),
                     "skills_normalized": entities.get("skills_normalized", []),
-                    "certifications": entities.get("certifications", []),
+                    "certifications": normalize_certifications(entities.get("certifications", [])),
                     "languages": extract_languages(text),
                     "summary": extract_summary(text),
                 }

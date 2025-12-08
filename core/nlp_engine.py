@@ -144,16 +144,35 @@ class NlpEngine:
         ]
         self.matcher.add("EXPERIENCE", experience_patterns)
         
-        # Date patterns for experience/education
+        # Date patterns for experience/education - comprehensive for all formats
         date_patterns = [
-            # Month Year - Month Year or Present
+            # Month Year - Month Year or Present (standard US)
             [{"SHAPE": "Xxxx"}, {"SHAPE": "dddd"}, {"ORTH": "-"}, {"SHAPE": "Xxxx"}, {"SHAPE": "dddd"}],
             [{"SHAPE": "Xxxx"}, {"SHAPE": "dddd"}, {"ORTH": "-"}, {"LOWER": "present"}],
             [{"SHAPE": "Xxxx"}, {"SHAPE": "dddd"}, {"ORTH": "–"}, {"SHAPE": "Xxxx"}, {"SHAPE": "dddd"}],
             [{"SHAPE": "Xxxx"}, {"SHAPE": "dddd"}, {"ORTH": "–"}, {"LOWER": "present"}],
-            # MM/YYYY - MM/YYYY
+            [{"SHAPE": "Xxxx"}, {"SHAPE": "dddd"}, {"ORTH": "—"}, {"SHAPE": "Xxxx"}, {"SHAPE": "dddd"}],
+            [{"SHAPE": "Xxxx"}, {"SHAPE": "dddd"}, {"ORTH": "—"}, {"LOWER": "present"}],
+            # MM/YYYY - MM/YYYY (ATS-friendly)
             [{"SHAPE": "dd/dddd"}, {"ORTH": "-"}, {"SHAPE": "dd/dddd"}],
             [{"SHAPE": "dd/dddd"}, {"ORTH": "-"}, {"LOWER": "present"}],
+            [{"SHAPE": "dd/dddd"}, {"ORTH": "–"}, {"SHAPE": "dd/dddd"}],
+            [{"SHAPE": "dd/dddd"}, {"ORTH": "–"}, {"LOWER": "present"}],
+            # Year only: 2020 - 2023
+            [{"SHAPE": "dddd"}, {"ORTH": "-"}, {"SHAPE": "dddd"}],
+            [{"SHAPE": "dddd"}, {"ORTH": "-"}, {"LOWER": "present"}],
+            [{"SHAPE": "dddd"}, {"ORTH": "–"}, {"SHAPE": "dddd"}],
+            [{"SHAPE": "dddd"}, {"ORTH": "–"}, {"LOWER": "present"}],
+            # Abbreviated month: Jan 2020 - Dec 2021
+            [{"SHAPE": "Xxx"}, {"SHAPE": "dddd"}, {"ORTH": "-"}, {"SHAPE": "Xxx"}, {"SHAPE": "dddd"}],
+            [{"SHAPE": "Xxx"}, {"SHAPE": "dddd"}, {"ORTH": "-"}, {"LOWER": "present"}],
+            # "to" instead of dash: Jan 2020 to Dec 2021
+            [{"SHAPE": "Xxxx"}, {"SHAPE": "dddd"}, {"LOWER": "to"}, {"SHAPE": "Xxxx"}, {"SHAPE": "dddd"}],
+            [{"SHAPE": "Xxxx"}, {"SHAPE": "dddd"}, {"LOWER": "to"}, {"LOWER": "present"}],
+            # Current/Now variations
+            [{"SHAPE": "Xxxx"}, {"SHAPE": "dddd"}, {"ORTH": "-"}, {"LOWER": "current"}],
+            [{"SHAPE": "Xxxx"}, {"SHAPE": "dddd"}, {"ORTH": "-"}, {"LOWER": "now"}],
+            [{"SHAPE": "Xxxx"}, {"SHAPE": "dddd"}, {"ORTH": "–"}, {"LOWER": "current"}],
         ]
         self.matcher.add("DATE_RANGE", date_patterns)
         
@@ -199,7 +218,16 @@ class NlpEngine:
         return entities
     
     def _extract_name(self, doc) -> Optional[str]:
-        """Extract candidate name from document"""
+        """Extract candidate name from document - handles multiple resume formats
+        
+        Supports various resume layouts:
+        - Traditional: Name at top center/left
+        - Modern: Name in header with contact info
+        - Creative: Name with styling/formatting
+        - Academic CV: Name followed by credentials
+        - ATS-friendly: Simple name at top
+        - Two-column: Name in sidebar or main area
+        """
         # Common titles/prefixes to strip
         title_prefixes = {'mr', 'mrs', 'ms', 'dr', 'prof', 'mr.', 'mrs.', 'ms.', 'dr.', 'prof.', 'sir', 'madam'}
         
@@ -216,11 +244,11 @@ class NlpEngine:
                 # Skip if it looks like a job title
                 if clean_word in {'engineer', 'developer', 'manager', 'analyst', 'consultant', 
                                   'director', 'specialist', 'coordinator', 'lead', 'senior', 
-                                  'junior', 'intern', 'associate'}:
+                                  'junior', 'intern', 'associate', 'resume', 'curriculum', 'vitae'}:
                     return False
             # All words should be primarily alphabetic and title case or all caps
             for word in words:
-                clean_word = word.replace('.', '').replace(',', '').replace("'", "")
+                clean_word = word.replace('.', '').replace(',', '').replace("'", "").replace('-', '')
                 if not clean_word.isalpha():
                     return False
                 # Should be title case or all caps (like "JOHN DOE")
@@ -238,7 +266,7 @@ class NlpEngine:
             while words and words[0].lower().strip('.') in title_prefixes:
                 words = words[1:]
             # Remove common suffixes
-            suffixes = {'jr', 'jr.', 'sr', 'sr.', 'ii', 'iii', 'iv', 'phd', 'md', 'esq'}
+            suffixes = {'jr', 'jr.', 'sr', 'sr.', 'ii', 'iii', 'iv', 'phd', 'md', 'esq', 'mba', 'cpa'}
             while words and words[-1].lower().strip('.') in suffixes:
                 words = words[:-1]
             if len(words) >= 2:
@@ -247,10 +275,12 @@ class NlpEngine:
         
         text = doc.text
         
-        # Strategy 1: Look for explicit name labels
+        # Strategy 1: Look for explicit name labels (common in forms and some templates)
         name_label_patterns = [
-            r'(?:name|full\s*name|candidate\s*name)\s*[:\-]\s*([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)+)',
+            r'(?:name|full\s*name|candidate\s*name|applicant\s*name)\s*[:\-]\s*([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)+)',
             r'^([A-Z][a-z]+\s+[A-Z][a-z]+)\s*\n',  # Name at start of doc followed by newline
+            # ALL CAPS name pattern (common in professional resumes)
+            r'^([A-Z]{2,}(?:\s+[A-Z]{2,})+)\s*\n',
         ]
         for pattern in name_label_patterns:
             match = re.search(pattern, text, re.MULTILINE | re.IGNORECASE)
@@ -397,27 +427,47 @@ class NlpEngine:
         # ===================
         # Extract LinkedIn
         # ===================
-        # LinkedIn usernames can contain letters, numbers, hyphens
-        # PDF extraction sometimes adds spaces, so we need to handle that
+        # LinkedIn usernames can contain letters, numbers, hyphens (max ~100 chars)
+        # LinkedIn URLs format: linkedin.com/in/username or linkedin.com/in/firstname-lastname-uuid
+        # The UUID part after the name is important and should be preserved
         linkedin_patterns = [
-            # Pattern with possible spaces (from PDF extraction issues)
-            r'linkedin\.com/in/([a-zA-Z0-9_-]+(?:\s+[a-zA-Z0-9_-]+)*)',
-            r'www\.linkedin\.com/in/([a-zA-Z0-9_-]+(?:\s+[a-zA-Z0-9_-]+)*)',
-            r'https?://(?:www\.)?linkedin\.com/in/([a-zA-Z0-9_-]+(?:\s+[a-zA-Z0-9_-]+)*)',
+            # Full URL with optional UUID suffix (e.g., bhavjot-singh-1a2b3c4d)
+            r'https?://(?:www\.)?linkedin\.com/in/([a-zA-Z0-9][a-zA-Z0-9_-]{2,100})',
+            r'(?:www\.)?linkedin\.com/in/([a-zA-Z0-9][a-zA-Z0-9_-]{2,100})',
         ]
         for pattern in linkedin_patterns:
             match = re.search(pattern, text, re.IGNORECASE)
             if match:
-                # Clean up the username - remove spaces and trailing special chars
+                # Clean up the username - handle PDF extraction artifacts
                 username = match.group(1)
-                # Remove spaces that shouldn't be there (PDF extraction artifact)
-                username = re.sub(r'\s+', '', username)
+                
+                # Remove common PDF artifacts - text that gets concatenated after URL
+                # Stop at common resume section headers that get merged
+                stop_words = ['Contact', 'About', 'Experience', 'Education', 'Skills', 
+                              'Top', 'Summary', 'Page', 'LinkedIn', 'Member']
+                for stop_word in stop_words:
+                    if stop_word in username:
+                        idx = username.find(stop_word)
+                        if idx > 5:  # Keep at least 5 chars
+                            username = username[:idx]
+                            break
+                
+                # LinkedIn usernames are lowercase in the URL
+                clean_username = username.lower()
+                
                 # Remove any trailing hyphens or special chars
-                username = username.rstrip('-_/')
-                # LinkedIn usernames are typically at least 5 chars
-                if len(username) >= 5:
-                    contact["linkedin"] = f"https://linkedin.com/in/{username}"
-                    break
+                clean_username = clean_username.rstrip('-_/')
+                
+                # If username ends with numbers after a hyphen, it's likely the UUID - keep it
+                # Format: firstname-lastname-uuid123 or just username-uuid123
+                
+                # LinkedIn usernames are typically 5-100 chars
+                # Validate the cleaned username
+                if 3 <= len(clean_username) <= 100:
+                    # Check it looks like a valid LinkedIn URL (has at least some lowercase letters)
+                    if re.match(r'^[a-z0-9][a-z0-9_-]*[a-z0-9]$', clean_username) or len(clean_username) <= 5:
+                        contact["linkedin"] = f"https://linkedin.com/in/{clean_username}"
+                        break
         
         # ===================
         # Extract GitHub
@@ -631,6 +681,58 @@ class NlpEngine:
             degree = (edu.get('degree') or '').strip()
             field = (edu.get('field_of_study') or '').strip()
             
+            # Clean up institution name - remove merged dates/pipes
+            if institution:
+                # Remove date patterns from institution name (e.g., "Fleming College | 2022-2023")
+                institution = re.sub(r'\s*\|\s*\d{4}.*$', '', institution).strip()
+                institution = re.sub(r'\s*\(\s*\d{4}.*$', '', institution).strip()
+                # Remove newlines and normalize spacing
+                institution = ' '.join(institution.split())
+                
+                # Check if field of study is merged with institution (e.g., "Entrepreneurship/Studies Canadore College")
+                # Look for institution keyword and extract just that part
+                for kw in institution_keywords:
+                    kw_lower = kw.lower()
+                    inst_lower = institution.lower()
+                    if kw_lower in inst_lower:
+                        # Find position of institution keyword
+                        idx = inst_lower.find(kw_lower)
+                        if idx > 0:
+                            # The institution keyword is in the middle - likely field of study is prepended
+                            # Extract text starting from a word before the keyword that looks like institution start
+                            # Usually institution name starts 1-3 words before the keyword
+                            words = institution.split()
+                            kw_word_idx = None
+                            for i, word in enumerate(words):
+                                if kw_lower in word.lower():
+                                    kw_word_idx = i
+                                    break
+                            if kw_word_idx is not None and kw_word_idx > 0:
+                                # Take 1-2 words before the keyword as institution start (e.g., "Fleming" before "College")
+                                start_idx = max(0, kw_word_idx - 2)
+                                # But only if those words look like proper names (capitalized)
+                                candidate_start = start_idx
+                                for j in range(start_idx, kw_word_idx):
+                                    if words[j][0].isupper() and not any(c in words[j].lower() for c in ['/', 'entrepreneurship', 'science', 'arts', 'studies', 'engineering', 'business']):
+                                        candidate_start = j
+                                        break
+                                institution = ' '.join(words[candidate_start:])
+                        break
+                
+                # Handle newline-separated field of study (e.g., "Entrepreneurship/Entrepreneurial Studies\nCanadore College")
+                if '\n' in institution or len(institution.split()) > 8:
+                    # Try to extract just the institution part
+                    for kw in institution_keywords:
+                        if kw in institution.lower():
+                            # Find the part with the institution keyword
+                            parts = re.split(r'[\n/]', institution)
+                            for part in parts:
+                                if kw in part.lower():
+                                    institution = part.strip()
+                                    break
+                            break
+                edu['institution'] = institution
+            
             # Clean up field of study - remove trailing special chars and incomplete text
             if field:
                 # Remove trailing · and incomplete parentheses
@@ -642,11 +744,21 @@ class NlpEngine:
                 inst_lower = institution.lower()
                 # Skip if contains action words (not institution names)
                 skip_words = ['monitor', 'management:', 'asset', 'track', 'control', 
-                             'provide', 'develop', 'ensure', 'implement', 'maintain']
+                             'provide', 'develop', 'ensure', 'implement', 'maintain',
+                             'opportunities', 'hybrid', 'remote', 'seeking', 'looking']
                 if any(sw in inst_lower for sw in skip_words):
                     continue
                 # Skip if too short
                 if len(institution) < 5:
+                    continue
+                # Skip if doesn't contain any institution keyword (must have university/college/institute etc)
+                if not any(kw in inst_lower for kw in institution_keywords):
+                    # Allow if it's a well-known institution abbreviation
+                    known_abbrevs = ['iit', 'nit', 'iiit', 'bits', 'mit', 'stanford', 'harvard', 'oxford', 'cambridge']
+                    if not any(abbr in inst_lower for abbr in known_abbrevs):
+                        continue
+                # Skip if starts with lowercase or common words
+                if institution[0].islower() or institution.lower().startswith(('and ', 'or ', 'the ', 'a ')):
                     continue
             
             # Skip entries that are only degree with no institution (if we have better entries)
@@ -670,7 +782,17 @@ class NlpEngine:
     
     def _parse_education_section(self, section: str, degree_mapping: Dict[str, str], 
                                   institution_keywords: List[str]) -> List[Dict[str, Any]]:
-        """Parse education entries from a section - handles LinkedIn multi-line format"""
+        """Parse education entries from a section - handles multiple resume formats
+        
+        Supported formats:
+        - LinkedIn PDF export
+        - Traditional chronological (Institution -> Degree -> Dates)
+        - ATS-friendly (Degree | Institution | Date)
+        - Academic CV (detailed with GPA, honors, coursework)
+        - Functional resumes (grouped by relevance)
+        - European/Europass format
+        - Single-line compact format
+        """
         entries = []
         
         # LinkedIn format patterns
@@ -681,6 +803,15 @@ class NlpEngine:
         
         # LinkedIn format: "Degree, Field of Study · (Date Range)"
         linkedin_degree_pattern = r'^([^,·\n]+),\s*([^·\n]+?)(?:\s*·\s*|\s+)\((.+?)\)\s*$'
+        
+        # Format 2: Traditional - "Degree in Field" or "Degree (Field)"
+        traditional_degree_pattern = r'^([A-Za-z\.\s]+(?:Bachelor|Master|Doctor|PhD|Associate|Diploma|Certificate)[A-Za-z\.\s]*)(?:\s+in\s+|\s*[\(\[]\s*)([^\)\]\|]+)?(?:[\)\]])?'
+        
+        # Format 3: ATS-friendly - "Institution | Degree | Date" or "Degree | Date"
+        ats_pattern = r'^(.+?)\s*\|\s*(.+?)\s*\|?\s*(\d{4}(?:\s*[-–]\s*\d{4})?)?\s*$'
+        
+        # Format 4: Compact single-line - "BS Computer Science, MIT, 2020"
+        compact_pattern = r'^([A-Za-z\.\s]+)(?:in\s+)?([A-Za-z\s]+),\s*([A-Za-z\s]+(?:University|College|Institute)[A-Za-z\s]*),?\s*(\d{4})?'
         
         # Normalize section text - combine broken lines
         lines = section.split('\n')
@@ -709,13 +840,73 @@ class NlpEngine:
         
         current_entry = {}
         
+        # Common section headers to skip
+        education_headers = {
+            'education', 'education:', 'academic background', 'academic credentials',
+            'educational qualifications', 'qualifications', 'academic history',
+            'educational background', 'degrees', 'academic qualifications',
+            'education & training', 'education and training', 'academic record'
+        }
+        
         for line in normalized_lines:
             # Skip section header
-            if line.lower().strip() in ['education', 'education:', 'academic background']:
+            if line.lower().strip() in education_headers:
+                continue
+            
+            line_lower = line.lower()
+            
+            # Format 2: Traditional degree format - "Bachelor of Science in Computer Science"
+            traditional_match = re.match(traditional_degree_pattern, line, re.IGNORECASE)
+            if traditional_match:
+                degree_part = traditional_match.group(1).strip()
+                field_part = traditional_match.group(2).strip() if traditional_match.group(2) else None
+                
+                if current_entry and current_entry.get('institution'):
+                    entries.append(current_entry)
+                    current_entry = {}
+                
+                current_entry['degree'] = degree_part
+                if field_part:
+                    current_entry['field_of_study'] = field_part
+                continue
+            
+            # Format 3: ATS pipe-separated format - "MIT | BS Computer Science | 2020"
+            ats_match = re.match(ats_pattern, line)
+            if ats_match and '|' in line:
+                parts = [p.strip() for p in line.split('|')]
+                
+                if len(parts) >= 2:
+                    # Determine which part is institution vs degree
+                    if any(kw in parts[0].lower() for kw in institution_keywords):
+                        if current_entry and current_entry.get('institution'):
+                            entries.append(current_entry)
+                        current_entry = {
+                            'institution': parts[0],
+                            'degree': parts[1] if len(parts) > 1 else None,
+                            'graduation_date': parts[2] if len(parts) > 2 else None
+                        }
+                    elif any(dk in parts[0].lower() for dk in ['bachelor', 'master', 'phd', 'diploma', 'associate', 'doctor']):
+                        current_entry['degree'] = parts[0]
+                        if len(parts) > 1 and any(kw in parts[1].lower() for kw in institution_keywords):
+                            current_entry['institution'] = parts[1]
+                        if len(parts) > 2:
+                            current_entry['graduation_date'] = parts[2]
+                    continue
+            
+            # Format 4: Compact single-line format
+            compact_match = re.match(compact_pattern, line, re.IGNORECASE)
+            if compact_match:
+                if current_entry and current_entry.get('institution'):
+                    entries.append(current_entry)
+                current_entry = {
+                    'degree': compact_match.group(1).strip(),
+                    'field_of_study': compact_match.group(2).strip() if compact_match.group(2) else None,
+                    'institution': compact_match.group(3).strip() if compact_match.group(3) else None,
+                    'graduation_date': compact_match.group(4) if compact_match.group(4) else None
+                }
                 continue
             
             # Check if this is an institution line (contains institution keyword, no degree indicators)
-            line_lower = line.lower()
             is_institution = (any(kw in line_lower for kw in institution_keywords) and 
                             not any(deg in line_lower for deg in ['diploma', 'bachelor', 'master', 'degree', 'certificate']))
             
@@ -781,13 +972,40 @@ class NlpEngine:
                             current_entry['field_of_study'] = second_part.strip(' ·()-')
                     continue
             
-            # Check for standalone date line
+            # DOCX format: "Degree in Field | Date" (pipe separator)
+            # Must check BEFORE standalone date check
+            pipe_match = re.match(r'^(.+?)\s*\|\s*(\d{4}\s*[-–]\s*\d{4}|\d{4})\s*$', line)
+            if pipe_match:
+                degree_field_part = pipe_match.group(1).strip()
+                date_part = pipe_match.group(2).strip()
+                
+                # Parse degree and field from "Diploma in Supply Chain & Logistics Management"
+                # or "Bachelor of Arts (Political Science)"
+                in_match = re.match(r'^(.+?)\s+in\s+(.+)$', degree_field_part, re.IGNORECASE)
+                paren_match = re.match(r'^(.+?)\s*\(([^)]+)\)\s*$', degree_field_part)
+                
+                if in_match:
+                    current_entry['degree'] = in_match.group(1).strip()
+                    current_entry['field_of_study'] = in_match.group(2).strip()
+                elif paren_match:
+                    current_entry['degree'] = paren_match.group(1).strip()
+                    current_entry['field_of_study'] = paren_match.group(2).strip()
+                else:
+                    current_entry['degree'] = degree_field_part
+                
+                current_entry['graduation_date'] = date_part.replace('–', '-')
+                continue
+            
+            # Check for standalone date line (only if line is primarily just a date)
             date_range_match = re.search(date_range_pattern, line, re.IGNORECASE)
             if date_range_match:
-                start_date = date_range_match.group(1).strip()
-                end_date = date_range_match.group(2).strip()
-                current_entry['graduation_date'] = f"{start_date} - {end_date}"
-                continue
+                # Only use as standalone date if line is mostly the date (not part of other content)
+                date_text = date_range_match.group(0)
+                if len(date_text) > len(line) * 0.5:  # Date is more than half the line
+                    start_date = date_range_match.group(1).strip()
+                    end_date = date_range_match.group(2).strip()
+                    current_entry['graduation_date'] = f"{start_date} - {end_date}"
+                    continue
             
             # Check for GPA
             gpa_match = re.search(gpa_pattern, line, re.IGNORECASE)
@@ -797,9 +1015,11 @@ class NlpEngine:
                 current_entry['gpa'] = f"{gpa_value}/{gpa_scale}"
                 continue
             
-            # Fallback: Check for degree keywords in line
+            # Fallback: Check for degree keywords in line (use word boundaries to avoid false matches)
             for abbr, full_name in degree_mapping.items():
-                if abbr in line_lower or full_name.lower() in line_lower:
+                # Use word boundary matching to prevent "diploma" matching "ma" inside it
+                abbr_pattern = r'\b' + re.escape(abbr) + r'\b'
+                if re.search(abbr_pattern, line_lower) or full_name.lower() in line_lower:
                     if not current_entry.get('degree'):
                         current_entry['degree'] = full_name
                     break
@@ -819,36 +1039,76 @@ class NlpEngine:
         return entries
     
     def _extract_section(self, text: str, section_names: List[str]) -> Optional[str]:
-        """Extract a section from the resume text"""
-        # Build regex pattern for section headers
+        """Extract a section from the resume text - handles multiple format styles
+        
+        Supports section headers in various formats:
+        - ALL CAPS: "EXPERIENCE", "EDUCATION"
+        - Title Case: "Work Experience", "Education"
+        - With colons: "Experience:", "Skills:"
+        - With underlines: "Experience" followed by dashes/underscores
+        - With separators: "Experience & Training", "Skills / Competencies"
+        - Numbered: "1. Experience", "2. Education"
+        """
+        # Build regex pattern for section headers (case-insensitive)
         section_pattern = '|'.join(re.escape(name) for name in section_names)
         
-        # Common section headers that might follow
-        all_sections = ['education', 'experience', 'skills', 'projects', 'certifications',
-                       'achievements', 'awards', 'publications', 'languages', 'interests',
-                       'references', 'summary', 'objective', 'profile', 'work history',
-                       'employment', 'professional', 'technical', 'personal', 'contact']
-        end_sections = [s for s in all_sections if s not in section_names]
+        # Extended list of all possible section headers
+        all_sections = [
+            'education', 'experience', 'skills', 'projects', 'certifications',
+            'achievements', 'awards', 'publications', 'languages', 'interests',
+            'references', 'summary', 'objective', 'profile', 'work history',
+            'employment', 'professional', 'technical', 'personal', 'contact',
+            'training', 'courses', 'coursework', 'research', 'volunteer',
+            'extracurricular', 'activities', 'memberships', 'affiliations',
+            'patents', 'presentations', 'conferences', 'honors', 'licenses',
+            'additional', 'other', 'miscellaneous', 'professional development',
+            'academic', 'career', 'qualifications', 'expertise', 'competencies',
+            'highlights', 'overview', 'about', 'about me', 'bio', 'biography'
+        ]
+        end_sections = [s for s in all_sections if s.lower() not in [n.lower() for n in section_names]]
         end_pattern = '|'.join(re.escape(name) for name in end_sections)
         
-        # Find section start
-        start_match = re.search(
-            rf'(?:^|\n)\s*({section_pattern})\s*[:\n]',
-            text,
-            re.IGNORECASE | re.MULTILINE
-        )
+        # Multiple patterns to find section headers
+        section_start_patterns = [
+            # Pattern 1: Standard with optional colon - "Experience:" or "Experience"
+            rf'(?:^|\n)\s*({section_pattern})(?:\s*[&/,]\s*\w+)?\s*[:\n]',
+            # Pattern 2: ALL CAPS - "EXPERIENCE" or "WORK EXPERIENCE"
+            rf'(?:^|\n)\s*({section_pattern.upper()})(?:\s*[&/,]\s*\w+)?\s*[:\n]',
+            # Pattern 3: With numbering - "1. Experience" or "I. Experience"
+            rf'(?:^|\n)\s*(?:\d+\.|[IVX]+\.)\s*({section_pattern})\s*[:\n]?',
+            # Pattern 4: With underline/separator on next line
+            rf'(?:^|\n)\s*({section_pattern})\s*\n\s*[-=_]+\s*\n',
+            # Pattern 5: In brackets or parentheses - "[Experience]" or "(Experience)"
+            rf'(?:^|\n)\s*[\[\(]({section_pattern})[\]\)]\s*[:\n]?',
+        ]
+        
+        start_match = None
+        for pattern in section_start_patterns:
+            start_match = re.search(pattern, text, re.IGNORECASE | re.MULTILINE)
+            if start_match:
+                break
         
         if not start_match:
             return None
         
         start_pos = start_match.end()
         
-        # Find section end
-        end_match = re.search(
-            rf'(?:^|\n)\s*({end_pattern})\s*[:\n]',
-            text[start_pos:],
-            re.IGNORECASE | re.MULTILINE
-        )
+        # Find section end using similar flexible patterns
+        end_patterns = [
+            rf'(?:^|\n)\s*({end_pattern})(?:\s*[&/,]\s*\w+)?\s*[:\n]',
+            rf'(?:^|\n)\s*({end_pattern.upper()})(?:\s*[&/,]\s*\w+)?\s*[:\n]',
+            rf'(?:^|\n)\s*(?:\d+\.|[IVX]+\.)\s*({end_pattern})\s*[:\n]?',
+            rf'(?:^|\n)\s*({end_pattern})\s*\n\s*[-=_]+\s*\n',
+        ]
+        
+        end_match = None
+        end_pos = None
+        for pattern in end_patterns:
+            match = re.search(pattern, text[start_pos:], re.IGNORECASE | re.MULTILINE)
+            if match:
+                if end_pos is None or match.start() < end_pos:
+                    end_match = match
+                    end_pos = match.start()
         
         if end_match:
             return text[start_pos:start_pos + end_match.start()]
@@ -857,7 +1117,20 @@ class NlpEngine:
             return text[start_pos:start_pos + 3000]
     
     def _extract_experience(self, doc, matches, phrase_matches) -> List[Dict[str, Any]]:
-        """Extract work experience with comprehensive details"""
+        """Extract work experience with comprehensive details - supports all resume formats
+        
+        Supported resume formats:
+        - Chronological: Lists jobs in reverse chronological order
+        - Functional: Groups experience by skills/functions
+        - Combination: Mixes chronological and functional
+        - Targeted: Customized for specific job
+        - LinkedIn PDF: Exported from LinkedIn profile
+        - ATS-friendly: Simple format with clear structure
+        - Academic CV: Detailed with research/teaching positions
+        - Creative: Modern layouts with unique formatting
+        - European/Europass: Structured European format
+        - Federal/Government: Detailed format for government jobs
+        """
         experience = []
         text = doc.text
         
@@ -868,49 +1141,92 @@ class NlpEngine:
                           'and', 'the', 'with', 'from', 'for', 'dedicated', 'committed',
                           'experienced', 'professional', 'proven', 'track', 'record'}
         
-        # Common company suffixes
+        # Common company suffixes - extended for international companies
         company_suffixes = ['ltd', 'ltd.', 'inc', 'inc.', 'corp', 'corp.', 'llc', 'llp',
                            'company', 'co', 'co.', 'corporation', 'enterprises', 'solutions',
                            'technologies', 'tech', 'systems', 'services', 'group', 'partners',
                            'consulting', 'labs', 'studio', 'studios', 'agency', 'firm',
-                           'designs', 'metals', 'industries', 'pvt', 'private', 'limited']
+                           'designs', 'metals', 'industries', 'pvt', 'private', 'limited',
+                           'gmbh', 's.a.', 'b.v.', 'n.v.', 'pty', 'plc', 'ag',
+                           'healthcare', 'pharmaceuticals', 'media', 'entertainment', 'retail']
         
-        # Job title keywords (standalone titles)
+        # Job title keywords (standalone titles) - extended list
         job_title_keywords = [
             'supervisor', 'manager', 'engineer', 'developer', 'analyst', 'lead', 'director',
             'coordinator', 'specialist', 'consultant', 'architect', 'designer', 'scientist',
             'administrator', 'officer', 'executive', 'associate', 'intern', 'trainee',
-            'founder', 'co-founder', 'owner', 'partner', 'president', 'vp', 'ceo', 'cto', 'cfo'
+            'founder', 'co-founder', 'owner', 'partner', 'president', 'vp', 'ceo', 'cto', 'cfo',
+            'head', 'chief', 'principal', 'fellow', 'researcher', 'professor', 'lecturer',
+            'assistant', 'staff', 'contractor', 'freelancer', 'technician', 'operator',
+            'representative', 'agent', 'clerk', 'secretary', 'receptionist'
         ]
         
         # Duration pattern (X years Y months)
         duration_pattern = r'(\d+\s*years?\s*\d*\s*months?)'
         
-        # Date range patterns
+        # Date range patterns - comprehensive list for all resume formats
         date_range_patterns = [
-            # Month Year - Month Year or Present
-            r'((?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{4})\s*[-–—]\s*((?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{4}|[Pp]resent)',
+            # Format 1: Month Year - Month Year or Present (most common)
+            r'((?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{4})\s*[-–—~to]+\s*((?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{4}|[Pp]resent|[Cc]urrent|[Nn]ow|[Oo]ngoing)',
+            # Format 2: MM/YYYY - MM/YYYY or Present (ATS-friendly)
+            r'(\d{1,2}/\d{4})\s*[-–—~to]+\s*(\d{1,2}/\d{4}|[Pp]resent|[Cc]urrent)',
+            # Format 3: YYYY-MM - YYYY-MM (ISO-ish format)
+            r'(\d{4}[-/]\d{1,2})\s*[-–—~to]+\s*(\d{4}[-/]\d{1,2}|[Pp]resent|[Cc]urrent)',
+            # Format 4: Year only - 2020 - 2023 or 2020 - Present
+            r'(\d{4})\s*[-–—~to]+\s*(\d{4}|[Pp]resent|[Cc]urrent|[Nn]ow)',
+            # Format 5: European format DD/MM/YYYY or DD.MM.YYYY
+            r'(\d{1,2}[./]\d{1,2}[./]\d{4})\s*[-–—~to]+\s*(\d{1,2}[./]\d{1,2}[./]\d{4}|[Pp]resent)',
+            # Format 6: Abbreviated month 'Jan 2020 - Present'
+            r"((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)['\.]?\s*\d{4})\s*[-–—~to]+\s*((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)['\.]?\s*\d{4}|[Pp]resent)",
+            # Format 7: Season Year - 'Spring 2020 - Fall 2021'
+            r'((?:Spring|Summer|Fall|Winter|Autumn)\s+\d{4})\s*[-–—~to]+\s*((?:Spring|Summer|Fall|Winter|Autumn)\s+\d{4}|[Pp]resent)',
+            # Format 8: With parentheses - (2020 - 2023)
+            r'\((\d{4})\s*[-–—]\s*(\d{4}|[Pp]resent)\)',
         ]
         
-        # Try LinkedIn-style parsing first
+        # Try multiple parsing strategies for different resume formats
+        # Strategy 1: Try LinkedIn-style parsing first
         # LinkedIn PDFs often have: "Company Name\n Duration\n Title\n Date Range\n Location"
         linkedin_entries = self._parse_linkedin_experience(text, company_suffixes, job_title_keywords, 
                                                             duration_pattern, date_range_patterns, skip_companies)
         if linkedin_entries:
             experience.extend(linkedin_entries)
         
-        # If no entries found, try section-based extraction
-        if not experience:
-            exp_section = self._extract_section(text, ['experience', 'work experience', 'employment history',
-                                                        'work history', 'professional experience',
-                                                        'career history', 'employment'])
-            
-            if exp_section:
-                entries = self._parse_experience_section_v2(exp_section, company_suffixes, 
-                                                             job_title_keywords, skip_companies)
-                experience.extend(entries)
+        # Strategy 2: Section-based extraction for standard resume formats
+        # Expanded section names to catch all variations
+        exp_section = self._extract_section(text, [
+            'experience', 'work experience', 'employment history', 'work history', 
+            'professional experience', 'career history', 'employment',
+            'relevant experience', 'related experience', 'professional background',
+            'career summary', 'positions held', 'job history', 'career experience',
+            'working experience', 'industry experience', 'practical experience',
+            'professional history', 'employment record', 'career path',
+            'appointments', 'positions', 'roles'
+        ])
         
-        # Use spaCy ORG entities as fallback for companies
+        if exp_section:
+            section_entries = self._parse_experience_section_v2(exp_section, company_suffixes, 
+                                                                 job_title_keywords, skip_companies)
+            # Merge entries - add section entries that aren't already in experience
+            existing_companies = {((e.get('company') or '').lower(), e.get('position', '') or '') for e in experience}
+            for entry in section_entries:
+                company = entry.get('company') or ''
+                position = entry.get('position') or ''
+                entry_key = (company.lower(), position)
+                # Add if not a duplicate and has a company name
+                if entry_key not in existing_companies and company:
+                    experience.append(entry)
+                    existing_companies.add(entry_key)
+        
+        # Strategy 3: Try functional resume format
+        # Functional resumes group achievements by skill area instead of by job
+        if not experience:
+            functional_entries = self._parse_functional_resume(text, company_suffixes, 
+                                                                job_title_keywords, skip_companies)
+            if functional_entries:
+                experience.extend(functional_entries)
+        
+        # Strategy 4: Use spaCy ORG entities as fallback for companies
         if not experience:
             seen_orgs = set()
             for ent in doc.ents:
@@ -936,24 +1252,136 @@ class NlpEngine:
         # Deduplicate and clean - remove entries with very short or fragment company names
         seen = set()
         cleaned_experience = []
+        
+        # Words that indicate garbage/fragment text in company names
+        garbage_words = {'ensure', 'provide', 'develop', 'maintain', 'create', 'implement',
+                         'utilize', 'manage', 'support', 'coordinate', 'facilitate', 'foster',
+                         'accuracy', 'efficiency', 'effectiveness', 'productivity', 'quality',
+                         'operational', 'strategic', 'professional', 'excellent', 'timely',
+                         'various', 'multiple', 'different', 'specific', 'relevant'}
+        
         for exp in experience:
             company = (exp.get('company') or '').strip()
             position = (exp.get('position') or '').strip()
             
+            # Clean company name - replace newlines with spaces and normalize
+            company = ' '.join(company.split())
+            
+            # Skip LinkedIn summary entries - these appear as "(X months) at Company" 
+            # and get parsed with company starting with duration or "at"
+            if re.match(r'^\(\d+\s*(?:years?|months?)', company):
+                continue
+            if company.lower().startswith('at '):
+                continue
+            # Skip if position starts with duration pattern (indicates summary entry)
+            if position and re.match(r'^\(\d+\s*(?:years?|months?)', position):
+                continue
+            
             # Skip if company name is too short or looks like a fragment
             if company:
                 company_lower = company.lower()
+                company_words = company_lower.split()
+                
                 if len(company) < 4:
                     continue
                 if any(company_lower.startswith(skip) for skip in skip_companies):
                     continue
-                # Skip fragmented text
-                if company_lower.endswith(('co', 'with', 'from', 'and', 'the', 'a')):
+                # Skip fragmented text (ends with prepositions/articles)
+                if company_lower.endswith(('co', 'with', 'from', 'and', 'the', 'a', 'an', 'to', 'for')):
                     continue
+                # Skip if any word is a garbage word (indicates fragment text)
+                if any(word in garbage_words for word in company_words):
+                    continue
+                # Skip if company contains only lowercase words (not proper names)
+                original_words = company.split()
+                if len(original_words) >= 2 and all(w[0].islower() for w in original_words if w):
+                    continue
+                # Skip if company contains "Present" (parsing error)
+                if 'present' in company_lower:
+                    # Try to extract just the company name after "Present "
+                    if company_lower.startswith('present '):
+                        company = company[8:].strip()
+                        if len(company) < 4:
+                            continue
+                    else:
+                        continue
+                # Skip if position is merged into company name (e.g., "Supervisor Aluminum Window...")
+                # Check if company starts with a job title
+                
+                # First check for multi-word positions like "Shipping Associate" (MUST be checked before single-word)
+                two_word_positions = [
+                    'shipping associate', 'production supervisor', 'warehouse manager',
+                    'operations manager', 'sales representative', 'marketing manager',
+                    'project coordinator', 'business analyst', 'quality inspector',
+                    'customer service', 'technical support', 'general manager',
+                    'assistant manager', 'senior developer', 'junior developer',
+                    'team lead', 'shift supervisor', 'floor manager', 'area manager',
+                    'production associate', 'warehouse associate', 'sales associate',
+                    'customer associate', 'service representative', 'account manager',
+                    'hr manager', 'finance manager', 'it manager', 'logistics coordinator',
+                    'supply chain', 'quality assurance', 'quality control', 'data analyst'
+                ]
+                position_found = False
+                for two_word_pos in two_word_positions:
+                    if company_lower.startswith(two_word_pos + ' '):
+                        remaining = company[len(two_word_pos)+1:].strip()
+                        if remaining and len(remaining) > 3:
+                            exp['position'] = exp.get('position') or company[:len(two_word_pos)+1].strip().title()
+                            company = remaining
+                            position_found = True
+                        break
+                
+                # Only check single-word titles if no two-word position was found
+                if not position_found:
+                    # Extended list of position keywords that might be merged with company names
+                    extended_title_keywords = job_title_keywords + [
+                        'shipping', 'production', 'warehouse', 'operations', 'sales', 'marketing',
+                        'finance', 'accounting', 'customer', 'technical', 'project', 'business',
+                        'quality', 'senior', 'junior', 'head', 'chief', 'assistant', 'general',
+                        'regional', 'national', 'global', 'deputy', 'vice', 'staff', 'line'
+                    ]
+                    
+                    for title_kw in extended_title_keywords:
+                        if company_lower.startswith(title_kw + ' '):
+                            # Extract position and company separately
+                            remaining = company[len(title_kw)+1:].strip()
+                            if remaining and len(remaining) > 3:
+                                exp['position'] = exp.get('position') or company[:len(title_kw)+1].strip().title()
+                                company = remaining
+                            break
+                
+                # Update the cleaned company name
+                exp['company'] = company
             
-            key = (company.lower() if company else '', position.lower() if position else '')
-            if key != ('', '') and key not in seen:
-                seen.add(key)
+            # Clean position name too
+            if position:
+                position = ' '.join(position.split())
+                exp['position'] = position
+            
+            company_key = company.lower() if company else ''
+            position_key = position.lower() if position else ''
+            full_key = (company_key, position_key)
+            
+            # Skip entries without positions if we already have any entry for this company with a position
+            if company_key and not position_key:
+                # Check if we already have an entry with this company AND a position
+                has_better_entry = any(
+                    (existing.get('company') or '').lower() == company_key and existing.get('position')
+                    for existing in cleaned_experience
+                )
+                if has_better_entry:
+                    continue  # Skip this incomplete entry
+            
+            if full_key != ('', '') and full_key not in seen:
+                seen.add(full_key)
+                # Also track company-only key when adding an entry WITH a position
+                # This allows us to filter out later no-position entries for same company
+                if position_key:
+                    # Remove any existing entry for this company without a position
+                    cleaned_experience = [
+                        e for e in cleaned_experience
+                        if not ((e.get('company') or '').lower() == company_key and not e.get('position'))
+                    ]
                 cleaned_experience.append(exp)
         
         return cleaned_experience[:10]  # Limit to 10 experiences
@@ -1062,16 +1490,171 @@ class NlpEngine:
             label_count = sum(1 for label in responsibility_labels if f'{label}:' in resp)
             if label_count > 1:
                 continue
+            # Skip if it looks like education entry (contains degree + university pattern)
+            education_patterns = [
+                r'\b(?:BA|BS|MA|MS|MBA|PhD|BSc|MSc|BBA|MCA|BCA|BEng|MEng|BTech|MTech)\b[,\s]+.*(?:University|College|Institute)',
+                r'\b(?:Bachelor|Master|Doctor|Diploma|Degree)\b[,\s]+.*(?:University|College|Institute)',
+                r'\b(?:University|College|Institute)\b[,\s]+\d{4}',
+                r'^[A-Z][A-Za-z]+\s+(?:of\s+)?(?:Arts|Science|Engineering|Commerce|Technology)\s+.*(?:University|College)',
+            ]
+            is_education = False
+            for edu_pattern in education_patterns:
+                if re.search(edu_pattern, resp, re.IGNORECASE):
+                    is_education = True
+                    break
+            if is_education:
+                continue
             filtered.append(resp)
         
         # Limit to top 8 responsibilities per entry
         return filtered[:8]
     
+    def _parse_functional_resume(self, text: str, company_suffixes: List[str],
+                                  job_title_keywords: List[str], skip_companies: set) -> List[Dict[str, Any]]:
+        """Parse functional/skills-based resume format
+        
+        Functional resumes group experience by skill areas rather than chronologically.
+        Common in career changers, those with gaps, or emphasizing transferable skills.
+        
+        Format typically looks like:
+        - LEADERSHIP EXPERIENCE
+          - Achievement 1 at Company A
+          - Achievement 2 at Company B
+        - TECHNICAL SKILLS
+          - Built X system at Company C
+          
+        This method extracts company names and positions from within achievement bullets.
+        """
+        entries = []
+        
+        # Look for functional sections (skill-based headers)
+        functional_sections = [
+            'leadership experience', 'management experience', 'technical experience',
+            'project management', 'team leadership', 'customer service experience',
+            'sales experience', 'marketing experience', 'administrative experience',
+            'relevant accomplishments', 'key accomplishments', 'selected achievements',
+            'professional accomplishments', 'career highlights', 'key achievements'
+        ]
+        
+        for section_name in functional_sections:
+            section = self._extract_section(text, [section_name])
+            if section:
+                # Look for company mentions within this section
+                # Pattern: "at Company Name" or "for Company Name" or "with Company Name"
+                company_mentions = re.findall(
+                    r'(?:at|for|with)\s+([A-Z][A-Za-z\s]+(?:' + 
+                    '|'.join(re.escape(s) for s in company_suffixes) + r'))',
+                    section,
+                    re.IGNORECASE
+                )
+                
+                for company in company_mentions:
+                    company = company.strip()
+                    if company.lower() not in skip_companies and len(company) > 3:
+                        # Check if we already have this company
+                        if not any(e.get('company', '').lower() == company.lower() for e in entries):
+                            entries.append({
+                                "company": company,
+                                "position": None,  # Functional resumes often don't specify position per company
+                                "start_date": None,
+                                "end_date": None,
+                                "duration": None,
+                                "location": None,
+                                "description": section_name.title(),
+                                "responsibilities": []
+                            })
+                
+                # Also look for "Company Name (Year - Year)" pattern
+                company_date_pattern = re.findall(
+                    r'([A-Z][A-Za-z\s]+)\s*\((\d{4})\s*[-–]\s*(\d{4}|[Pp]resent)\)',
+                    section
+                )
+                for company, start, end in company_date_pattern:
+                    company = company.strip()
+                    if company.lower() not in skip_companies and len(company) > 3:
+                        if not any(e.get('company', '').lower() == company.lower() for e in entries):
+                            entries.append({
+                                "company": company,
+                                "position": None,
+                                "start_date": start,
+                                "end_date": end,
+                                "duration": None,
+                                "location": None,
+                                "description": section_name.title(),
+                                "responsibilities": []
+                            })
+        
+        # Also look for a "Work History" or "Employment Summary" section 
+        # (common at end of functional resumes, just lists companies and dates)
+        employment_summary = self._extract_section(text, [
+            'employment summary', 'work history', 'employment record', 
+            'career timeline', 'job history'
+        ])
+        
+        if employment_summary:
+            # Pattern: "Company Name, Position, Dates" or "Company Name | Position | Dates"
+            summary_pattern = re.findall(
+                r'([A-Z][A-Za-z\s&,\.]+?)(?:\s*[,|]\s*)([A-Za-z\s]+)?(?:\s*[,|]\s*)?' +
+                r'(\d{4}\s*[-–]\s*(?:\d{4}|[Pp]resent))',
+                employment_summary
+            )
+            
+            for company, position, dates in summary_pattern:
+                company = company.strip().rstrip(',|')
+                position = position.strip() if position else None
+                
+                if company.lower() not in skip_companies and len(company) > 3:
+                    # Parse dates
+                    date_match = re.match(r'(\d{4})\s*[-–]\s*(\d{4}|[Pp]resent)', dates)
+                    start_date = date_match.group(1) if date_match else None
+                    end_date = date_match.group(2) if date_match else None
+                    
+                    # Check for duplicate
+                    if not any(e.get('company', '').lower() == company.lower() for e in entries):
+                        entries.append({
+                            "company": company,
+                            "position": position,
+                            "start_date": start_date,
+                            "end_date": end_date,
+                            "duration": None,
+                            "location": None,
+                            "description": None,
+                            "responsibilities": []
+                        })
+        
+        return entries
+    
     def _parse_linkedin_experience(self, text: str, company_suffixes: List[str], 
                                     job_title_keywords: List[str], duration_pattern: str,
                                     date_range_patterns: List[str], skip_companies: set) -> List[Dict[str, Any]]:
-        """Parse LinkedIn-style resume format"""
+        """Parse experience using company-suffix based detection
+        
+        This method works well for resumes that have explicit company suffixes like:
+        - LinkedIn PDF exports
+        - Formal/corporate resumes
+        - Resumes with clear company names (e.g., "Google Inc.", "Microsoft Corp")
+        
+        Also handles:
+        - Startup/founder entries
+        - Freelance/consulting entries
+        - Internship entries
+        """
         entries = []
+        
+        # Remove LinkedIn summary section entries that duplicate experience
+        # These appear as "(X years Y months) at Company Name" format at the end of the PDF
+        # Pattern 1: "(11 months) at Company Name | Date - Date"
+        summary_pattern1 = r'\(\d+\s*(?:years?|months?)(?:\s*\d+\s*(?:months?))?\)\s+at\s+[^\n]+'
+        text = re.sub(summary_pattern1, '', text, flags=re.IGNORECASE)
+        
+        # Pattern 2: Just "(X months)" at start of a line followed by company
+        summary_pattern2 = r'^\s*\(\d+\s*(?:years?|months?)\)\s+at\s+'
+        text = re.sub(summary_pattern2, '', text, flags=re.IGNORECASE | re.MULTILINE)
+        
+        # Also remove fragmented bullet points from summary section
+        # These start with bullet and have truncated content
+        fragment_pattern = r'•\s*[a-z][^•\n]{5,100}\.\.\.'
+        text = re.sub(fragment_pattern, '', text, flags=re.IGNORECASE)
         
         # Extended skip patterns for fragments
         extended_skip = skip_companies | {
@@ -1080,19 +1663,41 @@ class NlpEngine:
             'systems', 'solutions', 'timely', 'resolutions', 'feedback'
         }
         
-        # LinkedIn format often has company name followed by duration on same/next line
-        # Pattern: "Company Name Ltd\n2 years 3 months\nJob Title\nMonth Year - Present"
+        # Extended company suffixes to catch more company types
+        extended_company_suffixes = company_suffixes + [
+            'gmbh', 's.a.', 'b.v.', 'n.v.', 'pty', 'plc', 's.r.l.', 'a.s.', 'ag',
+            'healthcare', 'bank', 'insurance', 'pharmaceuticals', 'media',
+            'foundation', 'hospital', 'clinic', 'university', 'school'
+        ]
         
-        # Find all company names with suffixes - more strict pattern
-        company_pattern = r'\b([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)*\s+(?:' + '|'.join(re.escape(s) for s in company_suffixes) + r'))\b\s*\n?\s*(' + duration_pattern + r')?'
+        # Company pattern with flexible suffix matching
+        # Pattern: "Company Name Ltd\n2 years 3 months\nJob Title\nMonth Year - Present"
+        company_pattern = r'\b([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)*\s+(?:' + '|'.join(re.escape(s) for s in extended_company_suffixes) + r'))\b\s*\n?\s*(' + duration_pattern + r')?'
         
         for match in re.finditer(company_pattern, text, re.IGNORECASE):
             company = match.group(1).strip()
             duration = match.group(2).strip() if match.group(2) else None
             
-            # Clean company name - remove "Experience " prefix if present
-            if company.lower().startswith('experience '):
-                company = company[11:].strip()
+            # Clean company name - remove section header prefixes (Experience, Education, etc.)
+            # The regex can match across newlines, so we need to clean these up
+            section_headers = ['experience', 'education', 'skills', 'certifications', 'about', 'summary']
+            for header in section_headers:
+                # Check for header followed by space or newline
+                if company.lower().startswith(header + ' '):
+                    company = company[len(header)+1:].strip()
+                    break
+                elif company.lower().startswith(header + '\n'):
+                    company = company[len(header)+1:].strip()
+                    break
+                # Also check with just header at start (newline might be stripped)
+                elif '\n' in company:
+                    lines = company.split('\n')
+                    if lines[0].lower().strip() in section_headers:
+                        company = '\n'.join(lines[1:]).strip()
+                        break
+            
+            # Final cleanup - replace any remaining newlines with spaces
+            company = ' '.join(company.split())
             
             # Validate company name - more strict
             if not company or len(company) < 5:
@@ -1284,12 +1889,207 @@ class NlpEngine:
     
     def _parse_experience_section_v2(self, section: str, company_suffixes: List[str],
                                       job_title_keywords: List[str], skip_companies: set) -> List[Dict[str, Any]]:
-        """Parse experience entries from a section - improved version"""
+        """Parse experience entries from a section - handles multiple resume formats
+        
+        Supported formats:
+        - Traditional chronological: Company -> Title -> Dates -> Responsibilities
+        - Reverse chronological: Title -> Company -> Dates
+        - ATS-friendly: Title | Company | Dates (pipe separated)
+        - Functional: Grouped by skill/function
+        - Combination: Mixed format
+        - Academic CV: Detailed with multiple positions per institution
+        - European/Europass: Structured format
+        - Compact: Single-line entries
+        """
         entries = []
         lines = [l.strip() for l in section.split('\n') if l.strip()]
         
+        current_company = None
+        current_location = None
         current_entry = None
         responsibilities = []
+        
+        # Skip lines that contain fragment phrases (action verbs that start responsibilities)
+        fragment_words = {'utilize', 'provide', 'develop', 'ensure', 'implement', 
+                         'maintain', 'facilitating', 'fostering', 'managing',
+                         'coordinated', 'oversee', 'lead and', 'managed daily',
+                         'conduct', 'conducted', 'developed', 'assisted', 'launched',
+                         'recruited', 'monitored', 'oversaw', 'lead ', 'mentor',
+                         'successfully', 'improved', 'increased', 'reduced', 'created',
+                         'designed', 'built', 'established', 'achieved', 'delivered'}
+        
+        # Location pattern - must contain comma (city, state) OR be just a country name
+        # Extended to support more international locations
+        location_pattern = re.compile(
+            r'^(?:'
+            # City, Province/State, Country pattern
+            r'[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?,\s*[A-Z][a-zA-Z\s]+(?:,\s*(?:Canada|USA|US|India|UK|Australia|Germany|France|China|Japan|Singapore|UAE|Netherlands|Spain|Italy|Brazil|Mexico|Ireland|Switzerland|Sweden|Norway|Denmark|Finland|Belgium|Austria|New Zealand|South Korea|Taiwan|Hong Kong|Remote))?'
+            r'|'
+            # Just the country/state/region name alone
+            r'(?:India|Canada|USA|US|UK|Australia|Germany|France|China|Japan|Singapore|UAE|Netherlands|Spain|Italy|Brazil|Mexico|Ireland|Switzerland|Sweden|Norway|Remote|Ontario|Quebec|British Columbia|Alberta|California|New York|Texas|Washington|Massachusetts|Colorado|Georgia|Florida|Illinois|Pennsylvania)'
+            r'|'
+            # Remote/Hybrid work patterns
+            r'(?:Remote|Hybrid|On-site|Onsite|Work from Home|WFH)(?:\s*[-–/]\s*[A-Z][a-z]+)?'
+            r')\s*$',
+            re.IGNORECASE
+        )
+        
+        # Comprehensive date patterns for different formats
+        date_patterns = [
+            # Format 1: Title | Month Year – Present (pipe separator, common in ATS)
+            re.compile(
+                r'^(.+?)\s*[|\|]\s*((?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|'
+                r'Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{4})\s*[-–—~to]+\s*'
+                r'((?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|'
+                r'Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{4}|[Pp]resent|[Cc]urrent)',
+                re.IGNORECASE
+            ),
+            # Format 2: Title | MM/YYYY - MM/YYYY (numeric dates)
+            re.compile(
+                r'^(.+?)\s*[|\|]\s*(\d{1,2}/\d{4})\s*[-–—~to]+\s*(\d{1,2}/\d{4}|[Pp]resent|[Cc]urrent)',
+                re.IGNORECASE
+            ),
+            # Format 3: Title | YYYY - YYYY (year only)
+            re.compile(
+                r'^(.+?)\s*[|\|]\s*(\d{4})\s*[-–—~to]+\s*(\d{4}|[Pp]resent|[Cc]urrent)',
+                re.IGNORECASE
+            ),
+            # Format 4: Title (Month Year – Present) - parentheses around dates
+            re.compile(
+                r'^(.+?)\s*\(\s*((?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|'
+                r'Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{4})\s*[-–—~to]+\s*'
+                r'((?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|'
+                r'Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{4}|[Pp]resent|[Cc]urrent)\s*\)',
+                re.IGNORECASE
+            ),
+            # Format 5: Month Year – Present followed by Title (date first)
+            re.compile(
+                r'^((?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|'
+                r'Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{4})\s*[-–—~to]+\s*'
+                r'((?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|'
+                r'Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{4}|[Pp]resent|[Cc]urrent)\s*[:\|]?\s*(.+?)$',
+                re.IGNORECASE
+            ),
+        ]
+        
+        # Standalone date range pattern (for lines that are just dates)
+        standalone_date_pattern = re.compile(
+            r'^((?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|'
+            r'Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{4}|\d{1,2}/\d{4}|\d{4})\s*'
+            r'[-–—~to]+\s*((?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|'
+            r'Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{4}|\d{1,2}/\d{4}|\d{4}|[Pp]resent|[Cc]urrent)\s*$',
+            re.IGNORECASE
+        )
+        
+        # Company with date range on same line pattern
+        company_date_pattern = re.compile(
+            r'^([A-Z][A-Za-z\s&,\.]+?)\s*[,|\|]?\s*((?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|'
+            r'Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{4}|\d{1,2}/\d{4}|\d{4})\s*'
+            r'[-–—~to]+\s*((?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|'
+            r'Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{4}|\d{1,2}/\d{4}|\d{4}|[Pp]resent|[Cc]urrent)',
+            re.IGNORECASE
+        )
+        
+        def is_company_line(line: str) -> bool:
+            """Detect if a line is a company name - handles multiple resume formats"""
+            line_lower = line.lower()
+            
+            # Skip lines that are too long (> 8 words) - likely descriptions
+            words = line.split()
+            if len(words) > 8:
+                return False
+            
+            # Skip if starts with common action verbs (responsibilities)
+            action_starts = ('conduct', 'develop', 'assist', 'launch', 'recruit', 'monitor',
+                           'oversee', 'lead', 'mentor', 'successfully', 'improve', 'increase',
+                           'reduce', 'create', 'design', 'build', 'establish', 'achieve',
+                           'deliver', 'manage', 'maintain', 'implement', 'provide', 'utilize',
+                           'coordinate', 'support', 'facilitate', 'foster', 'responsible',
+                           'collaborated', 'spearheaded', 'initiated', 'streamlined', 'optimized',
+                           'analyzed', 'executed', 'oversaw', 'drove', 'led', 'supervised')
+            if line_lower.startswith(action_starts):
+                return False
+            
+            # Check for company suffix FIRST (before period check) 
+            # Extended list of company suffixes for international companies
+            extended_suffixes = company_suffixes + [
+                'gmbh', 's.a.', 'b.v.', 'n.v.', 'pty', 'plc', 's.r.l.', 'a.s.', 'ag',
+                'healthcare', 'pharmaceuticals', 'bank', 'insurance', 'media', 'publishing',
+                'entertainment', 'retail', 'logistics', 'manufacturing', 'automotive',
+                'aerospace', 'defense', 'energy', 'utilities', 'telecom', 'wireless',
+                'foundation', 'association', 'institute', 'laboratory', 'research',
+                'network', 'platform', 'digital', 'interactive', 'creative', 'global'
+            ]
+            has_suffix = any(suffix in line_lower for suffix in extended_suffixes)
+            if has_suffix and len(line) > 5:
+                return True
+            
+            # Check if line contains company indicator patterns
+            # E.g., "Company Name, Location" or "Company Name - Location"
+            company_with_location = re.match(
+                r'^([A-Z][A-Za-z\s&\.]+)(?:\s*[,\-–|]\s*[A-Z][a-z]+(?:,\s*[A-Z]{2,})?)?$',
+                line
+            )
+            if company_with_location and len(words) <= 6:
+                potential_company = company_with_location.group(1).strip()
+                if len(potential_company) > 3 and not any(kw in potential_company.lower() for kw in job_title_keywords):
+                    return True
+            
+            # For non-suffix lines: skip lines that end with a period (likely a sentence/description)
+            if line.endswith('.') and not any(suff in line_lower for suff in ['inc.', 'ltd.', 'corp.', 'co.']):
+                return False
+            
+            # Check if line is a capitalized name (1-5 words, no job title keywords, no dates)
+            if 1 <= len(words) <= 5:
+                # Must start with capital letter
+                if not line[0].isupper():
+                    return False
+                # Must not contain fragment words
+                if any(fw in line_lower for fw in fragment_words):
+                    return False
+                # Must not contain job title keywords (but allow "Senior" or "Junior" as part of company)
+                core_job_keywords = ['manager', 'engineer', 'developer', 'analyst', 'director',
+                                    'coordinator', 'specialist', 'consultant', 'architect',
+                                    'designer', 'scientist', 'administrator', 'intern']
+                if any(kw in line_lower for kw in core_job_keywords):
+                    return False
+                # Must not contain date patterns
+                if re.search(r'(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|\d{4})', line, re.IGNORECASE):
+                    return False
+                # Must not look like a location (contains comma or specific location words)
+                if location_pattern.match(line):
+                    return False
+                # All words should be capitalized (proper name) - allow for "&" and minor words
+                minor_words = {'and', 'of', 'the', 'for', 'in', 'at', '&'}
+                if all(w[0].isupper() or w.lower() in minor_words for w in words if w):
+                    return True
+            
+            return False
+        
+        def is_job_title_line(line: str) -> bool:
+            """Detect if a line is a job title"""
+            line_lower = line.lower()
+            words = line.split()
+            
+            # Skip if too long (likely description)
+            if len(words) > 8:
+                return False
+            
+            # Check for job title keywords
+            title_indicators = job_title_keywords + [
+                'head', 'chief', 'principal', 'staff', 'contractor', 'freelancer',
+                'full-time', 'part-time', 'contract', 'temporary', 'consultant',
+                'assistant', 'deputy', 'vice', 'senior', 'junior', 'entry-level',
+                'mid-level', 'team member', 'individual contributor'
+            ]
+            
+            if any(kw in line_lower for kw in title_indicators):
+                # Make sure it's not a responsibility (doesn't start with action verb)
+                action_starts = ('manage', 'develop', 'lead', 'create', 'implement', 'design')
+                if not line_lower.startswith(action_starts):
+                    return True
+            
+            return False
         
         i = 0
         while i < len(lines):
@@ -1303,75 +2103,140 @@ class NlpEngine:
                 i += 1
                 continue
             
-            # Check if this line looks like a company name
-            has_company_suffix = any(suffix in line.lower() for suffix in company_suffixes)
+            # Check if line starts with a number (numbered list responsibility)
+            if re.match(r'^\d+[\.\)]\s+', line):
+                responsibility = re.sub(r'^\d+[\.\)]\s+', '', line)
+                if responsibility and current_entry:
+                    responsibilities.append(responsibility)
+                i += 1
+                continue
             
-            # Skip lines that contain fragment phrases
-            fragment_words = ['utilize', 'provide', 'develop', 'ensure', 'implement', 
-                             'maintain', 'facilitating', 'fostering', 'managing']
-            is_fragment = any(fw in line.lower() for fw in fragment_words)
+            # Try all date patterns to match Title | Date or Date | Title formats
+            matched = False
+            for pattern in date_patterns:
+                match = pattern.match(line)
+                if match:
+                    # Save current entry if exists
+                    if current_entry:
+                        current_entry['responsibilities'] = responsibilities
+                        entries.append(current_entry)
+                        responsibilities = []
+                    
+                    groups = match.groups()
+                    # Determine which group is title and which are dates based on pattern
+                    if len(groups) == 3:
+                        # Check if first group is a date (format 5: date first)
+                        if re.match(r'^(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|\d)', groups[0], re.IGNORECASE):
+                            start_date = groups[0].strip()
+                            end_date = groups[1].strip()
+                            title = groups[2].strip() if groups[2] else None
+                        else:
+                            title = groups[0].strip()
+                            start_date = groups[1].strip()
+                            end_date = groups[2].strip()
+                        
+                        current_entry = {
+                            "company": current_company,
+                            "position": title,
+                            "start_date": start_date,
+                            "end_date": end_date,
+                            "duration": None,
+                            "location": current_location,
+                            "description": None,
+                            "responsibilities": []
+                        }
+                        matched = True
+                        break
             
-            # Check if line contains a job title keyword
-            has_job_title = any(kw in line.lower() for kw in job_title_keywords)
+            if matched:
+                i += 1
+                continue
             
-            # Check for date pattern
-            has_date = bool(re.search(r'(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{4}', line, re.IGNORECASE))
+            # Check for standalone date range (sets dates for current/next entry)
+            standalone_match = standalone_date_pattern.match(line)
+            if standalone_match and current_entry:
+                current_entry['start_date'] = standalone_match.group(1).strip()
+                current_entry['end_date'] = standalone_match.group(2).strip()
+                i += 1
+                continue
             
-            # Check for duration pattern
-            has_duration = bool(re.search(r'\d+\s*years?\s*\d*\s*months?', line, re.IGNORECASE))
-            
-            # If we found a new company (not a fragment), save current and start new entry
-            if has_company_suffix and len(line) > 5 and not is_fragment:
+            # Check for company with date on same line
+            company_date_match = company_date_pattern.match(line)
+            if company_date_match:
                 if current_entry:
                     current_entry['responsibilities'] = responsibilities
                     entries.append(current_entry)
                     responsibilities = []
                 
-                # Extract company name
-                company = line
-                for suffix in company_suffixes:
-                    pattern = rf'([A-Z][A-Za-z\s&,\.\-]+{re.escape(suffix)})'
-                    cm = re.search(pattern, line, re.IGNORECASE)
-                    if cm:
-                        company = cm.group(1).strip()
-                        break
-                
+                current_company = company_date_match.group(1).strip()
                 current_entry = {
-                    "company": company,
+                    "company": current_company,
                     "position": None,
-                    "start_date": None,
-                    "end_date": None,
+                    "start_date": company_date_match.group(2).strip(),
+                    "end_date": company_date_match.group(3).strip(),
                     "duration": None,
-                    "location": None,
+                    "location": current_location,
                     "description": None,
                     "responsibilities": []
                 }
-            elif current_entry:
-                # Update current entry with additional info
-                if has_job_title and not current_entry.get('position'):
-                    # Extract job title - clean it properly
-                    for kw in job_title_keywords:
-                        if kw in line.lower():
-                            # Get the line as the title (clean it)
-                            title = re.sub(r'\d+\s*years?\s*\d*\s*months?', '', line).strip()
-                            # Remove date patterns from title
-                            title = re.sub(r'\s*(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s*\d{0,4}.*$', '', title, flags=re.IGNORECASE).strip()
-                            # Also clean standalone month names at end
-                            title = re.sub(r'\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)$', '', title, flags=re.IGNORECASE).strip()
-                            if 3 < len(title) < 50:
-                                current_entry['position'] = title
-                            break
+                i += 1
+                continue
+            
+            # Check if this is a job title line (when company is already known)
+            if current_company and not current_entry and is_job_title_line(line):
+                current_entry = {
+                    "company": current_company,
+                    "position": line,
+                    "start_date": None,
+                    "end_date": None,
+                    "duration": None,
+                    "location": current_location,
+                    "description": None,
+                    "responsibilities": []
+                }
+                i += 1
+                continue
+            
+            # Check if this is a company name line
+            if is_company_line(line):
+                # Save current entry if exists
+                if current_entry:
+                    current_entry['responsibilities'] = responsibilities
+                    entries.append(current_entry)
+                    responsibilities = []
+                    current_entry = None
                 
-                if has_date and not current_entry.get('start_date'):
-                    date_match = re.search(r'((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{4})\s*[-–—]\s*((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{4}|[Pp]resent)', line, re.IGNORECASE)
-                    if date_match:
-                        current_entry['start_date'] = date_match.group(1)
-                        current_entry['end_date'] = date_match.group(2)
+                # Set new current company
+                current_company = line
+                current_location = None  # Reset location for new company
                 
-                if has_duration and not current_entry.get('duration'):
-                    dur_match = re.search(r'(\d+\s*years?\s*\d*\s*months?)', line, re.IGNORECASE)
-                    if dur_match:
-                        current_entry['duration'] = dur_match.group(1)
+                # Look ahead for location on next line
+                if i + 1 < len(lines):
+                    next_line = lines[i + 1]
+                    if location_pattern.match(next_line):
+                        current_location = next_line
+                
+                i += 1
+                continue
+            
+            # Check if this is a location line (sets location for current company context)
+            if location_pattern.match(line):
+                current_location = line
+                i += 1
+                continue
+            
+            # Check for fragment words - these are responsibilities, not entries
+            is_fragment = any(fw in line.lower() for fw in fragment_words)
+            
+            # If not a bullet but starts with capital and looks like responsibility, add it
+            if current_entry and is_fragment:
+                responsibilities.append(line)
+                i += 1
+                continue
+            
+            # Handle lines that might be responsibilities without bullets
+            if current_entry and len(line) > 30 and line[0].isupper():
+                responsibilities.append(line)
             
             i += 1
         
@@ -1392,8 +2257,74 @@ class NlpEngine:
             'india business development', 'utilize erp systems', 'effective tracking systems',
             'erp systems', 'technology', 'team development', 'strategic business development',
             'india', 'canada', 'usa', 'the', 'and', 'for', 'with', 'from', 'page',
-            'experience', 'education', 'summary', 'contact', 'references', 'objective'
+            'experience', 'education', 'summary', 'contact', 'references', 'objective',
+            # Company names and other non-skill items
+            'aluminum window designs', 'dashmesh metals', 'dineing', 'swiggy',
+            'present', 'accuracy', 'efficiency', 'output', 'productivity', 'growth',
+            'branding', 'disruptions', 'process', 'schedules',
+            # Fragment phrases that shouldn't be skills - common patterns
+            'and customer engagement', 'and enhance operational transparency',
+            'customer engagement.', 'operational transparency.',
+            'and customer engagement.', 'and enhance operational transparency.',
+            'recruited and trained staff', 'trained staff', 'recruited and',
+            # Date patterns that slip through
+            'november 2023', 'december 2023', 'january 2024', 'present',
+            'november 2023 – present', 'december 2023 – present',
+            # Software names with parentheses (malformed parsing)
+            'gainsight)', 'salesforce)', 'hubspot)', '(gainsight', '(salesforce', '(hubspot',
         }
+        
+        # Job titles that should NOT be considered skills
+        job_title_words = {
+            'supervisor', 'manager', 'engineer', 'developer', 'analyst', 'lead', 'director',
+            'coordinator', 'specialist', 'consultant', 'architect', 'designer', 'scientist',
+            'administrator', 'officer', 'executive', 'associate', 'intern', 'trainee',
+            'founder', 'co-founder', 'owner', 'partner', 'president', 'vp', 'ceo', 'cto', 'cfo',
+            'head', 'chief', 'principal', 'fellow', 'researcher', 'professor', 'lecturer',
+            'assistant', 'staff', 'contractor', 'freelancer', 'technician', 'operator',
+            'representative', 'agent', 'clerk', 'secretary', 'receptionist', 'team lead',
+            'team leader', 'senior', 'junior', 'mid-level', 'entry-level',
+            'production associate', 'shipping associate', 'warehouse associate',
+            'production & shipping associate', 'production and shipping associate',
+        }
+        
+        # Location names that should NOT be considered skills
+        location_words = {
+            # Countries
+            'india', 'canada', 'usa', 'us', 'uk', 'australia', 'germany', 'france', 'china',
+            'japan', 'singapore', 'uae', 'netherlands', 'spain', 'italy', 'brazil', 'mexico',
+            # Indian cities/states
+            'delhi', 'new delhi', 'mumbai', 'bangalore', 'bengaluru', 'chennai', 'hyderabad',
+            'kolkata', 'pune', 'ahmedabad', 'jaipur', 'lucknow', 'chandigarh', 'haryana',
+            'hisar', 'gurugram', 'gurgaon', 'noida', 'faridabad', 'karnal', 'ambala',
+            'punjab', 'rajasthan', 'gujarat', 'maharashtra', 'karnataka', 'tamil nadu',
+            'uttar pradesh', 'west bengal', 'andhra pradesh', 'telangana', 'kerala',
+            # Canadian cities/provinces
+            'toronto', 'vancouver', 'montreal', 'calgary', 'edmonton', 'ottawa', 'winnipeg',
+            'mississauga', 'brampton', 'hamilton', 'kitchener', 'london', 'victoria',
+            'woodbridge', 'markham', 'richmond hill', 'scarborough', 'etobicoke', 'north york',
+            'ontario', 'quebec', 'british columbia', 'alberta', 'manitoba', 'saskatchewan',
+            # US cities/states
+            'new york', 'los angeles', 'chicago', 'houston', 'phoenix', 'philadelphia',
+            'san francisco', 'seattle', 'boston', 'austin', 'denver', 'atlanta', 'miami',
+            'california', 'texas', 'florida', 'washington', 'massachusetts', 'colorado',
+            'georgia', 'illinois', 'pennsylvania', 'ohio', 'michigan', 'arizona',
+            # Other common locations
+            'remote', 'hybrid', 'on-site', 'onsite',
+        }
+        
+        # Words that indicate this is a sentence/phrase, not a skill
+        sentence_indicators = {
+            'address', 'oversee', 'ensure', 'provide', 'develop', 'manage', 'create',
+            'implement', 'maintain', 'utilize', 'coordinate', 'support', 'facilitate',
+            'foster', 'including', 'exceptional', 'various', 'multiple', 'different',
+            'proactively', 'effectively', 'successfully', 'and exceed', 'recruited',
+            'trained', 'coached', 'mentored', 'supervised', 'led', 'managed',
+        }
+        
+        # Common company suffixes to detect company names in skills
+        company_indicators = ['ltd', 'inc', 'corp', 'llc', 'metals', 'designs', 'solutions',
+                              'industries', 'enterprises', 'technologies', 'systems', 'services']
         
         # Extract using phrase matcher
         for match_id, start, end in phrase_matches:
@@ -1403,15 +2334,59 @@ class NlpEngine:
                 if skill.lower() not in skip_skill_phrases:
                     skills.add(skill.title() if skill.islower() else skill)
         
-        # Try to extract from skills section
-        skills_section = self._extract_section(text, ['skills', 'technical skills', 'core competencies',
-                                                       'competencies', 'expertise', 'proficiencies',
-                                                       'technologies', 'tools', 'programming languages',
-                                                       'top skills'])
+        # Try to extract from skills section - expanded section names
+        skills_section = self._extract_section(text, [
+            'skills', 'technical skills', 'core competencies', 'competencies', 
+            'expertise', 'proficiencies', 'technologies', 'tools', 
+            'programming languages', 'top skills', 'key skills', 'skill set',
+            'professional skills', 'relevant skills', 'areas of expertise',
+            'technical proficiencies', 'software skills', 'computer skills',
+            'it skills', 'hard skills', 'soft skills', 'transferable skills',
+            'technical competencies', 'qualifications', 'abilities',
+            'specialized skills', 'industry knowledge'
+        ])
         
         if skills_section:
-            # Extract skills from comma/bullet separated list
+            # Handle multiple skill formats
+            
+            # Format 1: Comma/bullet/pipe separated list
             skill_candidates = re.split(r'[,•\|;]\s*|\n', skills_section)
+            
+            # Format 2: Category-based skills (e.g., "Programming: Python, Java, C++")
+            category_pattern = re.findall(
+                r'([A-Za-z\s]+):\s*([^:\n]+)',
+                skills_section
+            )
+            for category, skill_list in category_pattern:
+                for skill in re.split(r'[,;•|]\s*', skill_list):
+                    skill = skill.strip()
+                    if skill and len(skill) > 1:
+                        skill_candidates.append(skill)
+            
+            # Format 3: Skill with proficiency level (e.g., "Python (Advanced)")
+            proficiency_pattern = re.findall(
+                r'([A-Za-z\s\+\#\.]+)\s*\([^)]*(?:expert|advanced|intermediate|beginner|proficient|fluent|basic)[^)]*\)',
+                skills_section,
+                re.IGNORECASE
+            )
+            skill_candidates.extend(proficiency_pattern)
+            
+            # Format 4: Skill with years experience (e.g., "Python - 5 years")
+            years_pattern = re.findall(
+                r'([A-Za-z\s\+\#\.]+)\s*[-–]\s*\d+\s*(?:years?|yrs?)',
+                skills_section,
+                re.IGNORECASE
+            )
+            skill_candidates.extend(years_pattern)
+            
+            # Format 5: Skills with rating bars/dots/stars (common in modern templates)
+            rating_pattern = re.findall(
+                r'^([A-Za-z\s\+\#\.]+?)(?:\s*[★☆●○◐◑▪▫■□]+|\s*\d+\s*%|\s*\d+/\d+)',
+                skills_section,
+                re.MULTILINE
+            )
+            skill_candidates.extend(rating_pattern)
+            
             for candidate in skill_candidates:
                 candidate = candidate.strip()
                 # Clean up common prefixes/suffixes
@@ -1420,11 +2395,18 @@ class NlpEngine:
                 
                 if 1 <= len(candidate.split()) <= 4 and 2 <= len(candidate) <= 50:
                     candidate_lower = candidate.lower()
-                    # Filter out section headers, generic words, and skip phrases
+                    # Filter out section headers, generic words, skip phrases, job titles, and locations
                     if (candidate_lower not in self.section_headers and 
                         candidate_lower not in self.skip_words and
-                        candidate_lower not in skip_skill_phrases):
-                        skills.add(candidate)
+                        candidate_lower not in skip_skill_phrases and
+                        candidate_lower not in job_title_words and
+                        candidate_lower not in location_words):
+                        # Also skip if it contains date patterns
+                        has_date = bool(re.search(r'\b(january|february|march|april|may|june|july|august|september|october|november|december)\b', candidate_lower))
+                        has_year = bool(re.search(r'\b(20\d{2}|19\d{2})\b', candidate))
+                        has_present = bool(re.search(r'[-–—]\s*(present|current|now)', candidate_lower))
+                        if not has_date and not has_year and not has_present:
+                            skills.add(candidate)
         
         # Add common programming language/technology detection
         tech_patterns = [
@@ -1456,21 +2438,94 @@ class NlpEngine:
             skill = ' '.join(skill.split())
             skill_lower = skill.lower()
             
+            # Remove trailing periods and clean up
+            skill = skill.rstrip('.,;:')
+            skill_lower = skill_lower.rstrip('.,;:')
+            
             # Skip invalid skills
             if len(skill) < 2 or len(skill) > 50:
                 continue
             if skill_lower in skip_skill_phrases:
                 continue
+            
+            # Skip if it's a job title (exact match)
+            if skill_lower in job_title_words:
+                continue
+            
+            # Skip if it CONTAINS a job title word (partial match for phrases like "Production Associate")
+            job_title_keywords = {'associate', 'manager', 'engineer', 'developer', 'analyst', 'specialist',
+                                  'coordinator', 'supervisor', 'director', 'executive', 'consultant',
+                                  'administrator', 'architect', 'lead', 'officer', 'representative',
+                                  'assistant', 'intern', 'trainee', 'founder', 'co-founder', 'ceo', 'cto', 'cfo'}
+            if any(f' {kw}' in f' {skill_lower} ' or skill_lower.endswith(kw) for kw in job_title_keywords):
+                continue
+            
+            # Skip if it's a location (exact match)
+            if skill_lower in location_words:
+                continue
+            
+            # Skip if it contains location indicators (city, state patterns)
+            if any(loc in skill_lower for loc in ['india', 'canada', 'ontario', 'haryana', 'delhi', 'mumbai', 
+                                                    'bangalore', 'toronto', 'vancouver', 'california', 'new york']):
+                continue
+            
+            # Skip if it looks like a sentence or phrase (contains sentence indicators)
+            if any(indicator in skill_lower for indicator in sentence_indicators):
+                continue
+            
+            # Skip if it looks like a company name
+            if any(indicator in skill_lower for indicator in company_indicators):
+                continue
+            
             # Skip if starts with action verb (likely a responsibility, not a skill)
-            if skill_lower.startswith(('utilize ', 'develop ', 'manage ', 'create ', 'implement ')):
+            action_verbs = ('utilize ', 'develop ', 'manage ', 'create ', 'implement ',
+                           'provide ', 'ensure ', 'maintain ', 'address ', 'oversee ',
+                           'recruited ', 'trained ', 'coached ', 'and ')
+            if skill_lower.startswith(action_verbs):
+                continue
+            
+            # Skip if it starts with "And " (sentence fragment)
+            if skill_lower.startswith('and '):
+                continue
+            
+            # Skip if it's too long and looks like a phrase (>4 words usually not a skill)
+            word_count = len(skill.split())
+            if word_count > 4:
+                continue
+            
+            # Skip if it contains punctuation that indicates a sentence (comma, period inside)
+            if ',' in skill or '. ' in skill:
+                continue
+            
+            # Skip if it ends with a period (likely incomplete sentence)
+            if skill.endswith('.'):
+                continue
+            
+            # Skip if it contains date patterns (Month Year, YYYY, etc.)
+            if re.search(r'\b(january|february|march|april|may|june|july|august|september|october|november|december)\b', skill_lower):
+                continue
+            if re.search(r'\b(20\d{2}|19\d{2})\b', skill):
+                continue
+            if re.search(r'[-–—]\s*(present|current|now)', skill_lower):
+                continue
+            
+            # Skip if it contains ")" without "(" - likely a fragment from (Tool) extraction
+            if ')' in skill and '(' not in skill:
+                continue
+            
+            # Skip common non-skill words
+            non_skill_words = {'present', 'current', 'remote', 'hybrid', 'full-time', 'part-time',
+                              'contract', 'permanent', 'temporary', 'freelance'}
+            if skill_lower in non_skill_words:
                 continue
             
             # Preserve common acronyms
-            if skill.upper() in ['AWS', 'GCP', 'SQL', 'API', 'REST', 'HTML', 'CSS', 'PHP', 'CI/CD', 'TDD', 'BDD', 'ERP', 'CRM', 'SAP']:
+            if skill.upper() in ['AWS', 'GCP', 'SQL', 'API', 'REST', 'HTML', 'CSS', 'PHP', 'CI/CD', 'TDD', 'BDD', 'ERP', 'CRM', 'SAP', 'HRM']:
                 cleaned_skills.add(skill.upper())
-            elif skill_lower in ['javascript', 'typescript', 'python', 'java', 'node.js', 'react', 'angular', 'vue']:
+            elif skill_lower in ['javascript', 'typescript', 'python', 'java', 'node.js', 'react', 'angular', 'vue', 'salesforce', 'hubspot', 'gainsight']:
                 cleaned_skills.add(skill.title())
             else:
+                # Title case but preserve known acronyms within
                 cleaned_skills.add(skill)
         
         return sorted(list(cleaned_skills))
@@ -1530,13 +2585,25 @@ class NlpEngine:
             lines = cert_section.split('\n')
             for line in lines:
                 line = line.strip()
-                if not line or len(line) < 8:  # Increased minimum length
+                if not line or len(line) < 3:
                     continue
-                # Clean up bullet points
-                line = re.sub(r'^[•\-\*\▪\▸→›○●]\s*', '', line)
+                    
+                # Stop if we hit another section header
+                line_lower = line.lower()
+                if any(header in line_lower for header in ['projects', 'achievements', 'additional', 
+                       'references', 'interests', 'hobbies', 'volunteer', 'awards']):
+                    break
+                    
+                # Clean up bullet points and non-breaking spaces
+                line = line.replace('\xa0', ' ')
+                line = re.sub(r'^[•\-\*\▪\▸→›○●]\s*', '', line).strip()
                 
-                # Skip lines that are just short words
-                if len(line.split()) < 2:
+                # Skip lines that look like descriptions (too long or contain action verbs)
+                if len(line) > 80:
+                    continue
+                action_verbs = ['improved', 'developed', 'created', 'managed', 'led', 'launched',
+                               'successfully', 'increased', 'reduced', 'achieved', 'delivered']
+                if any(verb in line_lower for verb in action_verbs):
                     continue
                 
                 # Extract date if present
@@ -1555,22 +2622,30 @@ class NlpEngine:
                     cert_name = cert_name[:id_match.start()].strip()
                 cert_name = re.sub(r'\s*[-–—:,]\s*$', '', cert_name)
                 
-                # Validate certification name
-                if len(cert_name) >= 8 and cert_name.lower() not in skip_cert_names:
-                    # Must contain at least one certification-related word or be in proper format
-                    is_valid = (
-                        any(kw in cert_name.lower() for kw in ['certified', 'certificate', 'certification', 'license']) or
-                        any(kw in cert_name.upper() for kw in ['CIFF', 'PMP', 'AWS', 'CCNA', 'CPA', 'CFA']) or
-                        re.match(r'^[A-Z]', cert_name)  # Starts with capital
-                    )
-                    if is_valid:
-                        certifications.append({
-                            "name": cert_name,
-                            "issuing_organization": None,
-                            "issue_date": issue_date,
-                            "expiry_date": None,
-                            "credential_id": credential_id
-                        })
+                # For items in a certification section, be more lenient
+                # Accept anything that starts with a capital and has at least 3 characters
+                if len(cert_name) >= 3 and cert_name.lower() not in skip_cert_names:
+                    if re.match(r'^[A-Z]', cert_name):
+                        # Handle comma-separated items like "Salesforce, HubSpot, Twillio"
+                        if ',' in cert_name:
+                            items = [item.strip() for item in cert_name.split(',')]
+                            for item in items:
+                                if len(item) >= 3 and item.lower() not in skip_cert_names:
+                                    certifications.append({
+                                        "name": item,
+                                        "issuing_organization": None,
+                                        "issue_date": issue_date,
+                                        "expiry_date": None,
+                                        "credential_id": credential_id
+                                    })
+                        else:
+                            certifications.append({
+                                "name": cert_name,
+                                "issuing_organization": None,
+                                "issue_date": issue_date,
+                                "expiry_date": None,
+                                "credential_id": credential_id
+                            })
         
         # Use regex patterns for known certifications
         for pattern in cert_patterns:

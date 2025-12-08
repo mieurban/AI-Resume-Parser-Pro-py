@@ -17,10 +17,12 @@ ENV LOG_LEVEL=info
 
 WORKDIR /app
 
-# Install system dependencies for spaCy and document processing
+# Install system dependencies for spaCy, document processing, and OCR
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     curl \
+    tesseract-ocr \
+    tesseract-ocr-eng \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first for better Docker layer caching

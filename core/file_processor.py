@@ -98,9 +98,19 @@ class FileProcessor:
 
         file_ext = Path(file_path).suffix.lower()
         
-        # If no extension or empty, try to detect from content
-        if not file_ext or file_ext == '.':
-            file_ext = self._detect_file_type(file_path)
+        # Always detect file type from content (magic bytes) for more reliable detection
+        # File extensions can be wrong or missing
+        detected_ext = self._detect_file_type(file_path)
+        
+        logger.info(f"File extraction: path={file_path}, extension={file_ext}, detected={detected_ext}")
+        
+        # Use detected type if extension is empty/missing, or if detected type differs
+        # (trust magic bytes over file extension for reliability)
+        if not file_ext or file_ext == '.' or detected_ext != '.txt':
+            # If we detected a real file type, use it
+            if detected_ext in ['.pdf', '.docx', '.png', '.jpg']:
+                file_ext = detected_ext
+                logger.info(f"Using detected file type: {file_ext}")
         
         if file_ext == '.pdf':
             return self._extract_from_pdf(file_path)
@@ -132,12 +142,27 @@ class FileProcessor:
             raise ValueError(f"PDF extraction failed: {str(e)}")
 
     def _extract_from_docx(self, file_path: str) -> str:
-        """Extract text from DOCX files"""
+        """Extract text from DOCX files - includes paragraphs and tables"""
         try:
             doc = Document(file_path)
             full_text = []
+            
+            # Extract from paragraphs
             for para in doc.paragraphs:
-                full_text.append(para.text)
+                if para.text.strip():
+                    full_text.append(para.text)
+            
+            # Also extract from tables (resumes often use tables for layout)
+            for table in doc.tables:
+                for row in table.rows:
+                    row_text = []
+                    for cell in row.cells:
+                        cell_text = cell.text.strip()
+                        if cell_text and cell_text not in row_text:  # Avoid duplicates
+                            row_text.append(cell_text)
+                    if row_text:
+                        full_text.append(' | '.join(row_text))
+            
             return '\n'.join(full_text)
         except Exception as e:
             raise ValueError(f"DOCX extraction failed: {str(e)}")
